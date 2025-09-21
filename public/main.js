@@ -162,13 +162,31 @@ class OptionsCalculator {
         });
     }
 
-    calculateTheoreticalPremium(legIndex) {
+    async calculateTheoreticalPremium(legIndex) {
         const leg = this.currentLegs[legIndex];
         if (!leg || !leg.strike) return;
 
         const marketParams = this.getMarketParams();
         const isCall = leg.type === 'Call';
         
+        // Try to get real market data first
+        let marketPrice = null;
+        if (window.realTimeData && window.realTimeData.getCurrentSymbol()) {
+            try {
+                const optionsData = await window.realTimeData.fetchOptionsChain();
+                const options = isCall ? optionsData.calls : optionsData.puts;
+                const matchingOption = options.find(option => 
+                    Math.abs(option.strike - leg.strike) < 0.01
+                );
+                if (matchingOption && matchingOption.premium > 0) {
+                    marketPrice = matchingOption.premium;
+                }
+            } catch (error) {
+                console.warn('Failed to fetch real options data:', error.message);
+            }
+        }
+
+        // Calculate theoretical price
         let theoreticalPrice;
         if (isCall) {
             theoreticalPrice = this.strategies.blackScholes.calculateCallPrice(
@@ -188,10 +206,26 @@ class OptionsCalculator {
             );
         }
 
+        // Use market price if available, otherwise theoretical
+        const finalPrice = marketPrice || theoreticalPrice;
+
         // Update the premium input
         const premiumInput = document.querySelector(`.leg-premium[data-leg="${legIndex}"]`);
         if (premiumInput) {
-            premiumInput.value = theoreticalPrice.toFixed(2);
+            premiumInput.value = finalPrice.toFixed(2);
+            
+            // Add indicator if using market data
+            const calcButton = document.querySelector(`.calc-premium-btn[data-leg="${legIndex}"]`);
+            if (marketPrice && calcButton) {
+                calcButton.innerHTML = `
+                    <span class="flex items-center">
+                        <span class="w-2 h-2 bg-green-400 rounded-full mr-2"></span>
+                        Market Price
+                    </span>
+                `;
+                calcButton.title = `Market: $${marketPrice.toFixed(2)} | Theoretical: $${theoreticalPrice.toFixed(2)}`;
+            }
+            
             this.updateCurrentLegs();
             this.calculateAndUpdate();
         }
@@ -398,5 +432,5 @@ class OptionsCalculator {
 
 // Initialize the application when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
-    new OptionsCalculator();
+    window.optionsCalculator = new OptionsCalculator();
 });
